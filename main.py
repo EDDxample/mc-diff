@@ -31,7 +31,7 @@ def setup():
     # download dependencies
     download_file(ENIGMA_PATH, "https://maven.fabricmc.net/cuchaz/enigma-cli/2.3.3/enigma-cli-2.3.3-all.jar")
     download_file(VINEFLOWER_PATH, "https://github.com/Vineflower/vineflower/releases/download/1.9.3/vineflower-1.9.3.jar")
-    download_file(VERSIONS_PATH, "https://piston-meta.mojang.com/mc/game/version_manifest.json")
+    download_file(VERSIONS_PATH, "https://piston-meta.mojang.com/mc/game/version_manifest.json", force=True)
 
     # create git repo
     if not os.path.exists(os.path.join(OUTPUT_DIR, ".git")):
@@ -134,9 +134,9 @@ def main():
         os.chdir("..")
 
 
-def download_file(path: str, url: str):
+def download_file(path: str, url: str, force=False):
     try:
-        if not os.path.exists(path):
+        if force or not os.path.exists(path):
             logging.info(f"Downloading {path}...")
             response = requests.get(url)
             response.raise_for_status()
