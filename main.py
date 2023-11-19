@@ -23,7 +23,6 @@ def setup():
     """
     Creates the needed folders and downloads the dependencies.
     """
-    logging.info("[setup/start]")
     # create folders
     os.makedirs(SRC_DIR, exist_ok=True)
     os.makedirs(CACHE_DIR, exist_ok=True)
@@ -39,11 +38,12 @@ def setup():
         os.system("git init")
         os.chdir("..")
 
-    logging.info("[setup/done]")
-
 
 def install_version(version: dict[str, str]):
-    logging.info(f"[install/{version['id']}]")
+    """
+    Downloads, deobfuscates and pushes a given version to the `SRC_DIR` repo.
+    """
+    logging.info(f"Installing {version['id']}...")
 
     json_path = os.path.join(CACHE_DIR, f"{version['id']}.json")
     jar_path = os.path.join(CACHE_DIR, f"{version['id']}.jar")
@@ -65,7 +65,7 @@ def install_version(version: dict[str, str]):
         logging.info("Converting mappings...")
         os.system(f"java -jar {ENIGMA_PATH} convert-mappings proguard {mappings_path} enigma {enigma_mappings_dir}")
 
-    # map client
+    # deobfuscate client
     if not os.path.exists(mapped_jar_path):
         logging.info("Deobfuscating jar...")
         os.system(f"java -jar {ENIGMA_PATH} deobfuscate {jar_path} {mapped_jar_path} {enigma_mappings_dir}")
@@ -93,6 +93,9 @@ def install_version(version: dict[str, str]):
 
 
 def iterate_versions() -> list[dict[str, str]]:
+    """
+    Detects the current installed version and returns the new updates after that.
+    """
     latest_installed = None
     if os.path.exists(latest_path := os.path.join(OUTPUT_DIR, "version.json")):
         with open(latest_path) as f:
