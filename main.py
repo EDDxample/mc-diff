@@ -3,20 +3,31 @@ import logging
 import os
 import shutil
 from datetime import datetime
+from pathlib import Path
 
 import requests
 
-logging.basicConfig(level=logging.INFO, format="[%(asctime)s] [%(levelname)s/%(name)s] %(message)s", datefmt="%H:%M:%S")
+import java
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s/%(name)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 # constants
 
-OUTPUT_DIR = "mc"
-SRC_DIR = os.path.join(OUTPUT_DIR, "src")
-CACHE_DIR = ".cache/"
+OUTPUT_DIR = Path("mc")
+OUTPUT_SRC_DIR = OUTPUT_DIR / "src"
+CACHE_DIR = Path(".cache/")
 
-ENIGMA_PATH = os.path.join(CACHE_DIR, "enigma.jar")
-VINEFLOWER_PATH = os.path.join(CACHE_DIR, "vineflower.jar")
-VERSIONS_PATH = os.path.join(CACHE_DIR, "versions.json")
+ENIGMA_VERSION = "2.5.2"
+ENIGMA_PATH = CACHE_DIR / f"enigma-{ENIGMA_VERSION}.jar"
+
+VINEFLOWER_VERSION = "1.11.1"
+VINEFLOWER_PATH = CACHE_DIR / f"vineflower-{VINEFLOWER_VERSION}.jar"
+
+VERSIONS_JSON_PATH = CACHE_DIR / "versions.json"
 
 
 def setup():
@@ -24,17 +35,27 @@ def setup():
     Creates the needed folders and downloads the dependencies.
     """
     # create folders
-    os.makedirs(SRC_DIR, exist_ok=True)
-    os.makedirs(CACHE_DIR, exist_ok=True)
+    OUTPUT_SRC_DIR.mkdir(parents=True, exist_ok=True)
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     # download dependencies
-    download_file(ENIGMA_PATH, "https://maven.fabricmc.net/cuchaz/enigma-cli/2.3.3/enigma-cli-2.3.3-all.jar")
-    download_file(VINEFLOWER_PATH, "https://github.com/Vineflower/vineflower/releases/download/1.9.3/vineflower-1.9.3.jar")
-    download_file(VERSIONS_PATH, "https://piston-meta.mojang.com/mc/game/version_manifest.json", force=True)
+    download_file(
+        ENIGMA_PATH,
+        f"https://maven.fabricmc.net/cuchaz/enigma-cli/{ENIGMA_VERSION}/enigma-cli-{ENIGMA_VERSION}-all.jar",
+    )
+    download_file(
+        VINEFLOWER_PATH,
+        f"https://github.com/Vineflower/vineflower/releases/download/{VINEFLOWER_VERSION}/vineflower-{VINEFLOWER_VERSION}.jar",
+    )
+    download_file(
+        VERSIONS_JSON_PATH,
+        "https://piston-meta.mojang.com/mc/game/version_manifest.json",
+        force=True,
+    )
 
     # create git repo
-    if not os.path.exists(os.path.join(OUTPUT_DIR, ".git")):
-        os.chdir("mc")
+    if not (OUTPUT_DIR / ".git").exists():
+        os.chdir(OUTPUT_DIR)
         os.system("git init")
         os.chdir("..")
 
@@ -43,52 +64,41 @@ def install_version(version: dict[str, str]):
     """
     Downloads, deobfuscates and pushes a given version to the `SRC_DIR` repo.
     """
-    logging.info(f"Installing {version['id']}...")
+    version_id = version["id"]
+    logging.info(f"Installing {version_id}...")
 
-    json_path = os.path.join(CACHE_DIR, f"{version['id']}.json")
-    jar_path = os.path.join(CACHE_DIR, f"{version['id']}.jar")
-    mappings_path = os.path.join(CACHE_DIR, f"{version['id']}.mappings")
-    enigma_mappings_dir = os.path.join(CACHE_DIR, f"{version['id']}.enigma")
-    mapped_jar_path = os.path.join(CACHE_DIR, f"{version['id']}.mapped.jar")
+    version_json_path = CACHE_DIR / f"{version_id}.json"
+    version_jar_path = CACHE_DIR / f"{version_id}.jar"
+    mappings_proguard_path = CACHE_DIR / f"{version_id}.mappings"
+    mappings_enigma_dir = CACHE_DIR / f"{version_id}.enigma"
+    mapped_jar_path = CACHE_DIR / f"{version_id}.mapped.jar"
 
     # download version json
-    download_file(json_path, version["url"])
-    with open(json_path) as f:
+    download_file(version_json_path, version["url"])
+    with version_json_path.open() as f:
         data = json.load(f)
 
     # download jar and mappings
-    download_file(jar_path, data["downloads"]["client"]["url"])
-    download_file(mappings_path, data["downloads"]["client_mappings"]["url"])
+    download_file(version_jar_path, data["downloads"]["client"]["url"])
+    download_file(mappings_proguard_path, data["downloads"]["client_mappings"]["url"])
 
     # convert mappings
-    if not os.path.exists(enigma_mappings_dir):
+    if not mappings_enigma_dir.exists():
         logging.info("Converting mappings...")
-        os.system(f"java -jar {ENIGMA_PATH} convert-mappings proguard {mappings_path} enigma {enigma_mappings_dir}")
+        java.convert_mappings(ENIGMA_PATH, mappings_proguard_path, mappings_enigma_dir)
 
     # deobfuscate client
-    if not os.path.exists(mapped_jar_path):
+    if not mapped_jar_path.exists():
         logging.info("Deobfuscating jar...")
-        os.system(f"java -jar {ENIGMA_PATH} deobfuscate {jar_path} {mapped_jar_path} {enigma_mappings_dir}")
+        java.deobfuscate_jar(
+            ENIGMA_PATH, version_jar_path, mappings_enigma_dir, mapped_jar_path
+        )
 
     # decompile client
-    args = [
-        "java",
-        "-jar",
-        VINEFLOWER_PATH,
-        "-log=error",
-        "-vvm=1",  # check validity
-        "-ump=0",  # don't use parameter names as given by MethodParameters attribute
-        "-udv=0",  # ignore LVT names for local and params
-        "-jvn=1",  # JAD-style names for local variables
-        "-jpr=1",  # JAD-style names for parameters
-        "-vac=1",  # Verify that anonymous classes are local
-        mapped_jar_path,
-        SRC_DIR,
-    ]
-    os.system(" ".join(args))
+    java.decompile_jar(VINEFLOWER_PATH, mapped_jar_path, OUTPUT_SRC_DIR)
 
     # save latest installed version
-    with open(os.path.join(OUTPUT_DIR, "version.json"), "w") as f:
+    with (OUTPUT_DIR / "version.json").open("w") as f:
         json.dump(version, f)
 
 
@@ -97,20 +107,22 @@ def iterate_versions() -> list[dict[str, str]]:
     Detects the current installed version and returns the new updates after that.
     """
     latest_installed = None
-    if os.path.exists(latest_path := os.path.join(OUTPUT_DIR, "version.json")):
-        with open(latest_path) as f:
+    if (latest_path := OUTPUT_DIR / "version.json").exists():
+        with latest_path.open() as f:
             data = json.load(f)
             latest_installed = datetime.fromisoformat(data["releaseTime"])
 
-    with open(VERSIONS_PATH) as f:
+    with VERSIONS_JSON_PATH.open() as f:
         data = json.load(f)
     release = data["latest"]["release"]
-    snapshot = data["latest"]["snapshot"]
+    _snapshot = data["latest"]["snapshot"]
 
     # install from top to latest release, if the releaseTime is newer than the latest version installed
     versions: list[dict] = []
     for version in data["versions"]:
-        if not latest_installed or latest_installed < datetime.fromisoformat(version["releaseTime"]):
+        if not latest_installed or latest_installed < datetime.fromisoformat(
+            version["releaseTime"]
+        ):
             versions.append(version)
 
         if version["id"] == release:
@@ -124,8 +136,8 @@ def main():
 
     for version in iterate_versions():
         # clean folder
-        shutil.rmtree(SRC_DIR)
-        os.makedirs(SRC_DIR, exist_ok=True)
+        shutil.rmtree(OUTPUT_SRC_DIR)
+        OUTPUT_SRC_DIR.mkdir(parents=True, exist_ok=True)
 
         # install version
         install_version(version)
@@ -137,13 +149,13 @@ def main():
         os.chdir("..")
 
 
-def download_file(path: str, url: str, force=False):
+def download_file(path: Path, url: str, force=False):
     try:
-        if force or not os.path.exists(path):
+        if force or not path.exists():
             logging.info(f"Downloading {path}...")
             response = requests.get(url)
             response.raise_for_status()
-            with open(path, "wb") as f:
+            with path.open("wb") as f:
                 f.write(response.content)
     except requests.RequestException as err:
         logging.error(err)
